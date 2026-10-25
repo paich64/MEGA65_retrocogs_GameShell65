@@ -409,6 +409,18 @@ start:
 	sta dst+3
 }
 
+.macro _inc32(ptr)
+{
+	inc ptr + 0
+	bne !+
+	inc ptr + 1
+	bne !+
+	inc ptr + 2
+	bne !+
+	inc ptr + 3
+!:
+}
+
 // _set32 - copy a 32bit value to a new memory location
 .macro _set32(value, dst)
 {
@@ -526,9 +538,9 @@ start:
 {
 	//Disable C65 rom protection using
 	//hypervisor trap (see mega65 manual)	
-	//lda #$70			// LV commented out, because decruncher is already disabling c65 rom protection
-	//sta $d640
-	//eom
+	lda #$70
+	sta $d640
+	eom
 	//Unmap C65 Roms $d030 by clearing bits 3-7
 	lda #%11111000
 	trb $d030

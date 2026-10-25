@@ -1,7 +1,8 @@
 // Only Segments Code and Data are included in the .prg, BSS and ZP are virtual
 // and must be proerly initialized.
 //
-.file [name="startup.prg", type="bin", segments="Code,Data"]
+.file [name="startup.prg", segments="Code,Data"]
+
 .cpu _45gs02				
 
 #define USE_DBG				// enable to see raster costs
@@ -16,9 +17,11 @@
 .const PIXIEANDSCREEN_RAM 	= $50000			// screen ram / pixie work ram goes here
 												// must be on a $100 alignment due to RRB pixie MAP behavior
 
+.const ATTIC_RAM = $8000000
+
 // --------------
 .segmentdef Zeropage [start=$02, min=$02, max=$fb, virtual]
-.segmentdef Code [start=$2000, max=$cfff]
+.segmentdef Code [start=$2001, max=$cfff]
 .segmentdef Data [startAfter="Code", max=$cfff]
 
 .segmentdef MappedPixieWorkRam [start=$8000, max=$bfff, virtual]
@@ -39,13 +42,17 @@
 // Defines to describe the screen size
 //
 .const SCREEN_WIDTH = 320
-.const SCREEN_HEIGHT = 104
+.const SCREEN_HEIGHT = 200
 
 .const PLAY_SCREEN_WIDTH = 320
 .const PLAY_SCREEN_HEIGHT = 200
 
-.const CREDITS_SCREEN_WIDTH = 256
-.const CREDITS_SCREEN_HEIGHT = 224
+.const CREDITS_SCREEN_WIDTH = 320
+.const CREDITS_SCREEN_HEIGHT = 200
+
+// Maximum number of Pixie words use per row, 1 pixie is 2+ words (GOTOX + CHAR + [optional CHAR])
+//
+.const NUM_PIXIEWORDS = 96					// Must be < 128 (to keep indexing within range)
 
 // ------------------------------------------------------------
 //
@@ -54,14 +61,11 @@
 #import "layers_Functions.s"
 #import "layout_Functions.s"
 #import "assets_Functions.s"
+#import "pixie_Functions.s"
 
 // ------------------------------------------------------------
 // Layer constants
 //
-
-// Maximum number of Pixie words use per row, 1 pixie is 2+ words (GOTOX + CHAR + [optional CHAR])
-//
-.const NUM_PIXIEWORDS = 96					// Must be < 128 (to keep indexing within range)
 
 // ------------------------------------------------------------
 // Layer layout for title screen example
@@ -160,7 +164,7 @@
 //
 .segment Zeropage "Main zeropage"
 
-Tmp:			.word $0000,$0000		// General reusable data (Don't use in IRQ)
+Tmp:			.word $0000,$0000			// General reusable data (Don't use in IRQ)
 Tmp1:			.word $0000,$0000
 Tmp2:			.word $0000,$0000
 Tmp3:			.word $0000,$0000
@@ -186,9 +190,9 @@ SaveStateEnd:
 // Main
 //--------------------------------------------------------
 .segment Code
-
-* = $2000
-	jmp Entry
+BasicUpstart65(Main)
+* = $2016 "Basic Entry"
+Main: jmp Entry
 
 .print "--------"
 
@@ -202,20 +206,22 @@ SaveStateEnd:
 
 .print "--------"
 
-.const blobsBegin = StartSection("iffl", $00000, $40000)
-.const iffl0 = AddAsset("FS-IFFL0", "sdcard/data.bin.addr.mc")
+.const blobsBegin = StartSection("files", $00000, $400000)
+.const file0 = AddAsset("GS-FILE0", "sdcard/data.bin")
 .const blobsEnd = EndSection()
 
 .print "--------"
 
-#import "layers_code.s"
 #import "layout_code.s"
 #import "assets_code.s"
+#import "layers_code.s"
 #import "system_code.s"
-#import "fastLoader.s"
-#import "decruncher.s"
 #import "keyb_code.s"
 #import "pixie_code.s"
+#import "loader.s"
+
+.segment Code "Decrunch"
+#import "decomp.s"
 
 // ------------------------------------------------------------
 //
@@ -227,10 +233,10 @@ SaveStateEnd:
 // ------------------------------------------------------------
 //
 .segment Code "Entry"
-Entry: 
-{
+Entry:
+{	
 	jsr System.Initialization1
-
+	
 	// Init the raster IRQ
 	//
  	sei
@@ -260,15 +266,12 @@ Entry:
 	lda #$00
 	sta $d020
 
-	// initialise fast load (start drive motor)
-	jsr fl_init
+	// initialise the loader
+	jsr loader_init
 
-	LoadFile(bg0Chars.addr + iffl0.crunchAddress, iffl0.filenamePtr)
-	DecrunchFile(bg0Chars.addr + iffl0.crunchAddress, bg0Chars.addr)
+	Loader_LoadFile(bg0Chars.addr + file0.crunchAddress, file0.filenamePtr)
+	Decomp32(bg0Chars.addr + file0.crunchAddress, bg0Chars.addr)
 
-	// done loading. stop drive motor
-	jsr fl_exit
-	
 	// Update screen positioning if PAL/NTSC has changed
 	jsr System.CenterFrameHorizontally
 	jsr System.CenterFrameVertically
@@ -295,9 +298,11 @@ Entry:
 
 	// initialize dpad data	
 	jsr System.InitDPad
-		
+
 mainloop:
 	WaitVblank()
+
+	jsr System.UdpateScreenVisibility
 
 	DbgBord(4)
 
